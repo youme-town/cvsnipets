@@ -3,7 +3,7 @@
  *  Implementation of color mixing matrix considering environment light
  *  2012.02.02 Daisuke Iwai
  *  2019.09.05 rewrited by Takefumi Hiraki
- *  2025.01.21 rewrited by Yoshiaki Maeda
+ *  2025.01.21 revised by Yoshiaki Maeda
  *
  *  Reference:
  *  Takenobu Yoshida, Chinatsu Horii, and Kosuke Sato, "A Virtual Color Reconstruction

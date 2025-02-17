@@ -172,7 +172,11 @@ namespace /* To avoid name collision*/ {
 		}
 	}
 
-
+	/**
+	 * @brief Capture color patterns
+	 * @param [in] projection_iamges Projection color patterns
+	 * @return Captured color patterns
+	 */
 	std::vector<cv::Mat> CaptureColorPatterns(const std::vector<cv::Mat>& projection_iamges) {
 
 		// Make the window for the projection
