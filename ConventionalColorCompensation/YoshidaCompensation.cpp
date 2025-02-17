@@ -149,6 +149,14 @@ namespace /* To avoid name collision*/ {
 
 	}
 
+	/**
+	 * @brief Calculate Yoshida's color mixing matrix
+	 *
+	 * @param [in] ideal_patterns Color patterns which are ideal results
+	 * @param [in] captured_patterns Color patterns which are captured by the camera
+	 * @param [out] color_mixing_matrix Color mixing matrix for every pixel
+	 * @return boolean value (true: success, false: failure)
+	 */
 	bool CalcYoshidaColorMixingMatrix(const std::vector<cv::Mat>& ideal_patterns, const std::vector<cv::Mat>& captured_patterns, cv::Mat& color_mixing_matrix) {
 
 		if (ideal_patterns.empty() || captured_patterns.empty()) {
@@ -245,7 +253,6 @@ namespace /* To avoid name collision*/ {
 					dst.at<cv::Vec3b>(pos[0], pos[1])[i]
 						= cv::saturate_cast<uchar>(tmp_input_RGB_projector.at<double>(i, 0));
 				}
-
 			}
 
 			});
