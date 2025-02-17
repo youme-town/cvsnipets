@@ -24,6 +24,13 @@ namespace your_functions {
 		return cv::Mat();
 	};
 
+	void ToCameraCoordinates(const cv::Mat& src, cv::Mat& dst) {
+		dst = src.clone();
+	};
+
+	void ToProjectorCoordinates(const cv::Mat& src, cv::Mat& dst) {
+		dst = src.clone();
+	};
 
 }
 
@@ -41,7 +48,7 @@ namespace /* To avoid name collision*/ {
 	constexpr int PRO_WINDOW_HEIGHT = 1080;  //!< The height of the projector window
 	constexpr int ROI_IMAGE_WIDTH = 512;  //!< The width of the ROI
 	constexpr int ROI_IMAGE_HEIGHT = 512;  //!< The height of the ROI
-	constexpr double GAAMA[3] = { 2.2, 2.2, 2.2 };  //!< The gamma value for each color (B, G, R)
+	constexpr double GAMMA[3] = { 2.2, 2.2, 2.2 };  //!< The gamma value for each color (B, G, R)
 	/* @} */
 
 	/** @name File Path Group
@@ -67,7 +74,66 @@ namespace /* To avoid name collision*/ {
 		}
 	}
 
+	/**
+	 * @brief Calculate cenntered cv::Rect of source size cv::Mat
+	 * @param [in] src_size Source image size
+	 * @param [out] dst Destination cv::Rect
+	 * @param [in] window_width Window width
+	 * @param [in] window_height Window height
+	 * @return Returns true on success, false on failure
+	 */
+	bool CalcCenterROI(
+		const cv::Size& src_size,
+		cv::Rect& dst,
+		const int window_width,
+		const int window_height) {
+		if (src_size.width > window_width || src_size.height > window_height) {
+			std::cerr << "Invalid size" << std::endl;
+			return false;
+		}
 
+		const int dst_x = (window_width - src_size.width) / 2;
+		const int dst_y = (window_height - src_size.height) / 2;
+
+		dst = cv::Rect(dst_x, dst_y, src_size.width, src_size.height);
+
+		return true;
+	}
+
+	/**
+	 * @brief Embeds an image into a specified Rect.
+	 * @param [in] src Source image
+	 * @param [out] dst Destination image
+	 * @param [in] dst_roi Destination region of interest
+	 * @param [in] window_width Window width
+	 * @param [in] window_height Window height
+	 * @return Returns true on success, false on failure
+	 */
+	bool MakeWindowSizeMat(const cv::Mat& src, cv::Mat& dst, const cv::Rect& dst_roi,
+		const int window_width, const int window_height)
+	{
+		if (dst_roi.x < 0 || dst_roi.y < 0 || dst_roi.width <= 0 || dst_roi.height <= 0) {
+			std::cerr << "Invalid roi" << std::endl;
+			return false;
+		}
+		if (src.cols != dst_roi.width || src.rows != dst_roi.height) {
+			std::cerr << "Invalid size" << std::endl;
+			return false;
+		}
+
+		dst = cv::Mat::zeros(cv::Size(window_width, window_height), src.type());
+		cv::Mat roi = dst(dst_roi);
+		src.copyTo(roi);
+
+		return true;
+	}
+
+	/**
+	 * @brief Generate color patterns for RGB compensation
+	 * @param [out] ideal_patterns Ideal color patterns
+	 * @param [out] projection_patterns Projection color patterns
+	 * @param [in] gamma Gamma value for each color (B, G, R)
+	 */
 	void GenerateColorPatterns(std::vector<cv::Mat>& ideal_patterns, std::vector<cv::Mat>& projection_patterns, const double gamma[3]) {
 		std::vector<cv::Mat> projection_images; 
 		std::vector<cv::Mat> ideal_images;
@@ -75,7 +141,7 @@ namespace /* To avoid name collision*/ {
 		cv::Mat temp_img = cv::Mat::zeros(PRO_WINDOW_HEIGHT, PRO_WINDOW_WIDTH, CV_8UC3);
 
 		// calculate inverse gamma LUT
-		cv::Mat lut = cv::Mat(1, 256, CV_8UC3);      //!< ルックアップテーブル用配列
+		cv::Mat lut = cv::Mat(1, 256, CV_8UC3);      //!< matrix for look up table
 		::CalcInverseGammaLUT(lut, gamma);
 
 		int color_grad_cnt = 0;
@@ -129,7 +195,10 @@ namespace /* To avoid name collision*/ {
 
 		std::vector<cv::Mat> captured_patterns;
 
+		int capture_count = 0;
 		for (const auto& proj_img : projection_iamges) {
+			std::cout << "Capture count: " << capture_count++ << std::endl;
+
 			cv::imshow("projection_win", proj_img);
 			cv::waitKey(CAMERA_WAIT_MS);
 
@@ -180,10 +249,12 @@ namespace /* To avoid name collision*/ {
 		const int num_color_patterns = ideal_patterns.size();
 
 		cv::Mat color_mix_mat = cv::Mat::zeros(camera_height, camera_width, CV_64FC(num_channel_YoshidaCMM));
+
 		// Parallel computation using forEach method
 		color_mix_mat.forEach<cv::Vec<double, num_channel_YoshidaCMM>>([&](cv::Vec<double, num_channel_YoshidaCMM>& p, const int* pos)-> void {
 			cv::Mat captured_pixel_values = cv::Mat::zeros(num_color_patterns * 3, 1, CV_64FC1);
 			cv::Mat ideal_pixel_values = cv::Mat::zeros(num_color_patterns * 3, 1, CV_64FC1);
+
 			// Load RGB values for matrix computation
 			for (int i = 0; i < num_color_patterns; i++) {
 				captured_pixel_values.at<double>(3 * i + 0, 0) = (double)captured_patterns[i].at<cv::Vec3b>(pos[0], pos[1])[0];
@@ -211,7 +282,7 @@ namespace /* To avoid name collision*/ {
 
 
 	/**
-	 * @brief Calculate Yoshida's RGB compensation
+	 * @brief Calculate Yoshida's RGB compensation using the color mixing matrix
 	 *
 	 * @details This function calculates the RGB compensation using Yoshida's method,
 	 * not including the pixel warping process and inverse gamma correction.
@@ -262,76 +333,41 @@ namespace /* To avoid name collision*/ {
 
 
 	bool CalcYoshidaRGBCompensationImage(
-		const std::string& input_folder_path,
-		const std::string& output_folder_path,
-		const cv::Mat& pro_to_cam,
-		const cv::Mat& cam_to_pro,
-		const cv::Mat& c2p_map,
-		const cv::Mat& p2c_map) {
+		const std::vector<cv::Mat> &input_images,
+		std::vector<cv::Mat>& output_images,
+		const cv::Mat &color_mix_mat,
+		const double gamma[3]=GAMMA) {
 
-	#ifdef DEBUG
-		int cnt = 0;
-	#endif // DEBUG
-
-		namespace us = useful_functions;
-		namespace rf = related_functions;
-
-		std::cout << "Read color mixing matrix file" << std::endl;
-		// 色補正行列の読み込み
-		cv::Mat color_mix_mat;
-		std::string cmm_path = std::string(OUTPUT_PATH) + std::string(COLOR_MIXING_MATRIX_NAME) + ".mat";
-		if (!us::LoadMatBinary(cmm_path, color_mix_mat)) {
-			std::cerr << "Failed to read the color mixing matrix" << std::endl;
-			return false;
-		}
-		std::cout << "Reading done" << std::endl;
-
-		std::cout << "Read images" << std::endl;
-
-		// 画像の読み込み
-		std::vector<us::ImageData> images;
-		images = us::LoadImagesAndNamesFromFolder(input_folder_path);
-
-		std::cout << "Reading done" << std::endl;
-
-
-	#ifdef DEBUG
-
-		std::cout << "Images size: " << images.size() << std::endl;
-
-		for (auto& im : images) {
-			std::cout << "Image name: " << im.filename << std::endl;
-			std::string filename = std::string(OUTPUT_PATH) + std::string(DEBUG_IMAGE_PATH) + im.filename_noext + "_debug.png";
-			us::ImgWrite(filename, im.image);
-		}
-
-	#endif // DEBUG
-
-		// vector<cv::Mat>に格納
-		std::vector<cv::Mat> input_images;
-
-		// ウィンドウサイズの計算
-		cv::Rect pro_roi;
-		if (!us::CalcCenterROI(cv::Size(EXP_IMAGE_WIDTH, EXP_IMAGE_HEIGHT), pro_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT)) {
-			std::cerr << "Calculation ROI failed" << std::endl;
+		if (input_images.empty()) {
+			std::cerr << "Input images are empty" << std::endl;
 			return false;
 		}
 
 
 		// フルスクリーン画像に変えてからベクトルに格納
-		for (auto& im : images) {
+		std::vector<cv::Mat> fullscreen_images;
+		std::vector<cv::Rect> input_images_roi;
+		for (auto& im : input_images) {
+			// ウィンドウサイズの計算
+			cv::Rect pro_roi;
+			if (!::CalcCenterROI(im.size(), pro_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT)) {
+				std::cerr << "Calculation Center ROI failed" << std::endl;
+				return false;
+			}
+			// ROIを保存
+			input_images_roi.push_back(pro_roi);
+
 			cv::Mat tmp_resize, tmp_pro;
 			// リサイズ
-			cv::resize(im.image.clone(), tmp_resize, cv::Size(EXP_IMAGE_WIDTH, EXP_IMAGE_HEIGHT));
+			cv::resize(im.clone(), tmp_resize, im.size());
 
 			// ウィンドウサイズに変換
-			if (!us::MakeWindowSizeMat(tmp_resize, tmp_pro, pro_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT)) {
+			if (!::MakeWindowSizeMat(tmp_resize, tmp_pro, pro_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT)) {
 				std::cerr << "MakeWindowSizeMat failed" << std::endl;
 				return false;
 			}
 
-			input_images.push_back(tmp_pro.clone());
-
+			fullscreen_images.push_back(tmp_pro.clone());
 
 		}
 
@@ -339,20 +375,11 @@ namespace /* To avoid name collision*/ {
 
 
 		std::vector<cv::Mat> warped_images;
-		for (auto& image : input_images) {
+		for (auto& image : fullscreen_images) {
 			cv::Mat tmp_dst;
-			tmp_dst = rf::YourWarpImageFunctionToCameraCoordinates(image, p2c_map, c2p_map);
+			your_functions::ToCameraCoordinates(image, tmp_dst);
 			warped_images.push_back(tmp_dst.clone());
 		}
-
-	#ifdef DEBUG
-		cnt = 0;
-		for (auto& im : warped_images) {
-			std::string zeronum = us::GetZeroPaddingNumberString(cnt++, 4);
-			std::string filename = std::string(OUTPUT_PATH) + std::string(DEBUG_IMAGE_PATH) + "_debug_warped" + zeronum + ".png";
-			us::ImgWrite(filename, im);
-		}
-	#endif // DEBUG
 
 		std::cout << "Warping done" << std::endl;
 
@@ -360,68 +387,48 @@ namespace /* To avoid name collision*/ {
 
 		// Calculate inverse gamma correction array
 		cv::Mat lut = cv::Mat(1, 256, CV_8UC3);
-		us::CalcInvGammaLUT(lut, GAMMA);
+		::CalcInverseGammaLUT(lut, gamma);
 
 		std::vector<cv::Mat> yoshida_images;
 
 		for (auto& image : warped_images) {
 			cv::Mat tmp_dst;
-			CalcYoshidaColor(image, tmp_dst, color_mix_mat);
+			::CalcYoshidaColor(image, tmp_dst, color_mix_mat);
 			yoshida_images.push_back(tmp_dst.clone());
 		}
 
-	#ifdef DEBUG
-		cnt = 0;
-		for (auto& im : yoshida_images) {
-			std::string zeronum = us::GetZeroPaddingNumberString(cnt++, 4);
-			std::string filename = std::string(OUTPUT_PATH) + std::string(DEBUG_IMAGE_PATH) + "_debug_calc" + zeronum + ".png";
-			us::ImgWrite(filename, im);
-		}
-	#endif // DEBUG
-
-		std::cout << "Calc Yoshida RGB done" << std::endl;
+		std::cout << "Calculating Yoshida RGB done" << std::endl;
 
 		std::cout << "Warping images" << std::endl;
 
-		std::vector<cv::Mat> projection_images;
-
-		for (auto& image : yoshida_images) {
+		for (int i = 0; i < yoshida_images.size(); i++) {
+			cv::Mat& image = yoshida_images[i];
 			cv::Mat tmp_dst;
-			tmp_dst = rf::YourWarpImageFunctionToProjectorCoordinates(image, p2c_map, c2p_map);
+			your_functions::ToProjectorCoordinates(image, tmp_dst);
 
 			// 投影画像領域以外を黒で埋める
-			// 黒い画像を作成
 			cv::Mat tmp_pro = cv::Mat::zeros(PRO_WINDOW_HEIGHT, PRO_WINDOW_WIDTH, CV_8UC3);
 			// 必要な部分に代入
+			cv::Rect pro_roi = input_images_roi[i];
 			cv::Mat roi_tmp_pro(tmp_pro, pro_roi);
 			cv::Mat roi_tmp_dst(tmp_dst, pro_roi);
 			roi_tmp_dst.copyTo(roi_tmp_pro);
-			projection_images.push_back(tmp_pro.clone());
+			output_images.push_back(tmp_pro.clone());
 		}
+
 		std::cout << "Warping done" << std::endl;
 
-	#ifdef DEBUG
-		cnt = 0;
-		for (auto& im : warped_images) {
-			std::string zeronum = us::GetZeroPaddingNumberString(cnt++, 4);
-			std::string filename = std::string(OUTPUT_PATH) + std::string(DEBUG_IMAGE_PATH) + "_debug_calc_warped_" + zeronum + ".png";
-			us::ImgWrite(filename, im);
-		}
-	#endif // DEBUG
+		std::cout << "Inverse gamma correction" << std::endl;
 
-		std::cout << "Save images" << std::endl;
-
-		// projection_imagesの画像をimagesに戻す
-		for (size_t i = 0; i < images.size(); ++i) {
-			// ガンマ補正
-			cv::LUT(projection_images[i], lut, projection_images[i]);
-			images[i].image = projection_images[i];
+		for (auto& image : output_images) {
+			cv::Mat tmp_dst;
+			cv::LUT(image, lut, tmp_dst);
+			image = tmp_dst.clone();
 		}
 
-		// prefixを指定して画像を保存
-		us::SaveProcessedImages(images, output_folder_path, "Yoshida_compensated_");
+		std::cout << "Inverse gamma correction done" << std::endl;
 
-		std::cout << "Save done" << std::endl;
+		std::cout << "Calc Yoshida RGB done" << std::endl;
 
 		return true;
 
