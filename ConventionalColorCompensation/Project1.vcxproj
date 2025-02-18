@@ -135,7 +135,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="RGBFeedbackOptimization.cpp" />
     <ClCompile Include="YoshidaColorMixingMatrix.hpp" />
     <ClCompile Include="RGBCompensation.cpp" />
   </ItemGroup>

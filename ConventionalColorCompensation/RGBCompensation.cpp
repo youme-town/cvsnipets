@@ -21,8 +21,9 @@ namespace your_functions {
 	};
 	void TerminateCamera() {};
 
-	cv::Mat Capture() {
-		return cv::Mat();
+	bool Capture(cv::Mat& dst) {
+		// Capture an image from the camera and store it in dst
+		return true;
 	};
 
 	void ToCameraCoordinates(const cv::Mat& src, cv::Mat& dst) {
@@ -183,6 +184,40 @@ namespace /* To avoid name collision*/ {
 	}
 
 	/**
+	 * @brief Displays an image centered in a window of specified screen size.
+	 *
+	 * @details Creates a black image of the given screen size, places the input image centered within it, and displays the result in the specified window.
+	 * @param [in] window_name Name of the window where the image will be displayed.
+	 * @param [in] img Image to be displayed.
+	 * @param [in] screen_size Size of the screen (window) where the image will be centered.
+	 * @exception None
+	 */
+	void ImgShowCenter(const std::string& window_name, const cv::Mat& img, cv::Size screen_size) {
+
+		cv::Mat screen = cv::Mat::zeros(screen_size, img.type());
+		const int x = (screen_size.width - img.cols) / 2;
+		const int y = (screen_size.height - img.rows) / 2;
+
+		img.copyTo(screen(cv::Rect(x, y, img.cols, img.rows)));
+		cv::imshow(window_name, screen);
+	}
+
+	std::string GetZeroPaddingNumberString(const int main_num, const int num_digits)
+	{
+		std::ostringstream oss;
+		// 桁数エラー
+		if (std::to_string(main_num).length() > num_digits) {
+			throw std::invalid_argument("Number of digits in main_num exceeds num_digits");
+		}
+		oss << std::setfill('0') << std::setw(num_digits) << main_num;
+		return oss.str();
+	}
+
+	// -------------------------------------------------------------------------------------
+	// RGB compensation functions
+	// -------------------------------------------------------------------------------------
+
+	/**
 	 * @brief Generate color patterns for RGB compensation
 	 * @param [out] ideal_patterns Ideal color patterns
 	 * @param [out] projection_patterns Projection color patterns
@@ -260,7 +295,11 @@ namespace /* To avoid name collision*/ {
 			cv::imshow("projection_win", proj_img);
 			cv::waitKey(CAMERA_WAIT_MS);
 
-			cv::Mat captured_image = your_functions::Capture();
+			cv::Mat captured_image;
+			if (!your_functions::Capture(captured_image)) {
+				std::cerr << "Failed to capture an image" << std::endl;
+			}
+
 			captured_patterns.push_back(captured_image.clone());
 		}
 
@@ -348,7 +387,7 @@ namespace /* To avoid name collision*/ {
 	 * @param [out] dst destination image (camera coordinates)
 	 * @param [in]  color_mix_mat color mixing matrix
 	 */
-	void CalcYoshidaColor(const cv::Mat& src, cv::Mat& dst, const cv::Mat& color_mix_mat) {
+	void CalcYoshidaImage(const cv::Mat& src, cv::Mat& dst, const cv::Mat& color_mix_mat) {
 		std::mutex mtx;
 		dst = cv::Mat(src.size(), src.type());
 
@@ -389,7 +428,7 @@ namespace /* To avoid name collision*/ {
 	}
 
 
-	bool CalcYoshidaRGBCompensationImage(
+	bool YoshidaRGBCompensationImage(
 		const std::vector<cv::Mat>& input_images,
 		std::vector<cv::Mat>& output_images,
 		const cv::Mat& color_mix_mat,
@@ -450,7 +489,7 @@ namespace /* To avoid name collision*/ {
 
 		for (auto& image : warped_images) {
 			cv::Mat tmp_dst;
-			::CalcYoshidaColor(image, tmp_dst, color_mix_mat);
+			::CalcYoshidaImage(image, tmp_dst, color_mix_mat);
 			yoshida_images.push_back(tmp_dst.clone());
 		}
 
@@ -460,16 +499,14 @@ namespace /* To avoid name collision*/ {
 
 		for (int i = 0; i < yoshida_images.size(); i++) {
 			cv::Mat& image = yoshida_images[i];
-			cv::Mat tmp_dst;
-			your_functions::ToProjectorCoordinates(image, tmp_dst);
+			cv::Mat tmp_yoshida;
+			your_functions::ToProjectorCoordinates(image, tmp_yoshida);
 
-			// 投影画像領域以外を黒で埋める
-			cv::Mat tmp_pro = cv::Mat::zeros(PRO_WINDOW_HEIGHT, PRO_WINDOW_WIDTH, CV_8UC3);
-			// 必要な部分に代入
+			// 入力画像サイズで処理
+			cv::Mat tmp_pro = cv::Mat::zeros(input_images[i].size(), CV_8UC3);
 			cv::Rect pro_roi = input_images_roi[i];
-			cv::Mat roi_tmp_pro(tmp_pro, pro_roi);
-			cv::Mat roi_tmp_dst(tmp_dst, pro_roi);
-			roi_tmp_dst.copyTo(roi_tmp_pro);
+			tmp_yoshida(pro_roi).copyTo(tmp_pro);
+
 			output_images.push_back(tmp_pro.clone());
 		}
 
@@ -554,7 +591,12 @@ namespace /* To avoid name collision*/ {
 		const cv::Mat& target_img,
 		const cv::Mat& first_projection_img,
 		const std::string& save_folder,
-		const int num_iterations) {
+		const int num_iterations,
+		const int gain,
+		const double gamma[3] = GAMMA) {
+
+		cv::Mat projection_img;	//< 投影画像
+		cv::Mat update_img;		//< 更新画像
 
 		// ウィンドウを作成
 		::MakeFullScreenWindow("Projection", PRO_WINDOW_X);
@@ -572,60 +614,29 @@ namespace /* To avoid name collision*/ {
 			return false;
 		}
 
-		// ----------------------
-		// Capture target image
-		// ----------------------
-
-		// 投影画像を表示
-		cv::Mat fullscreen_target_img;
-		::MakeWindowSizeMat(target_img, fullscreen_target_img, center_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT);
-		cv::Mat lut;
-		::CalcInverseGammaLUT(lut, GAMMA);
-
-		cv::LUT(fullscreen_target_img, lut, fullscreen_target_img);
-
-		cv::imshow("Projection", fullscreen_target_img);
-		cv::waitKey(CAMERA_WAIT_MS);
-
-		// --------
-		// Capture
-		// --------
-
-		std::cout << "Capture the target image" << std::endl;
-
-		//NOTE: Please implement your capature function
-		cv::Mat captured_target_img;
-
-		// Warp the captured image
-		cv::Mat tmp_t_captured_img;
-		your_functions::ToProjectorCoordinates(captured_target_img, tmp_t_captured_img);
-
-		// 撮影画像（クリップ済み）を保存
-		std::string t_clipped_captured_path =
-			std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-			+ "captured_cliped_target_image" + ".png";
-
-		::ImgWrite(t_clipped_captured_path, tmp_t_captured_img(center_roi).clone());
-
-		std::cout << "Capture Done" << std::endl;
-
 		// -----------------------
 		// Start the optimization
 		// -----------------------
 
-		for (int num_i = 0; num_i < num_iterations; ++num_i) {
+		for (int num_i = -1; num_i < num_iterations; ++num_i) {
+			std::cout << "Iteration: " << num_i << std::endl;
+
+			if (num_i == -1) {
+				// 目標画像を投影
+				projection_img = first_projection_img.clone();
+				update_img = first_projection_img.clone();
+			}
+			else if (num_i == 0) {
+			 // 最初の投影画像を設定
+				projection_img = first_projection_img.clone();
+				update_img = first_projection_img.clone();
+			}
 
 			// ファイル名用のゼロ埋め番号
-			std::string zero_padding_num = us::GetZeroPaddingNumberString(num_i, 4);
+			std::string zero_padding_num = ::GetZeroPaddingNumberString(num_i, 4);
+
 			// 更新画像を投影
-			cv::imshow("Projection", projection_img);
-
-			// 投影画像を保存
-			std::string projection_path =
-				std::string(OUTPUT_PATH) + std::string(PROJECTION_IMAGE_PATH)
-				+ "projection_image_" + zero_padding_num + ".png";
-
-			::ImgWrite(projection_path, projection_img);
+			::ImgShowCenter("Projection", projection_img, cv::Size(PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT));
 
 			// カメラバッファに反映されるまで待つ
 			cv::waitKey(CAMERA_WAIT_MS);
@@ -633,20 +644,11 @@ namespace /* To avoid name collision*/ {
 			// --------
 			// Capture
 			// --------
-			std::cout << "Iteration: " << num_i << std::endl;
 
-			//NOTE: Please implement your capature function
+			// NOTE: Please implement your capature function
 			cv::Mat captured_img;
 
-			std::string raw_path =
-				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-				+ std::string(RAW_IMAGE_PATH) + "raw_captured_image_" + zero_padding_num + ".CR2";
-
-			std::string png_path =
-				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-				+ "captured_image_" + zero_padding_num + ".png";
-
-			if (!rf::CaptureWithYourCam(cam, raw_path, png_path, captured_img)) {
+			if (!your_functions::Capture(captured_img)) {
 				std::cerr << "Failed to capture the image" << std::endl;
 				return false;
 			}
@@ -657,42 +659,21 @@ namespace /* To avoid name collision*/ {
 
 			// Warp the captured image
 
-			cv::Mat tmp_captured_img =
-				rf::YourWarpImageFunctionToProjectorCoordinates(captured_img, p2c_map, c2p_map);
-			// 撮影画像（warped）を保存
-			std::string warped_captured_path =
-				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-				+ "captured_warped_image_" + zero_padding_num + ".png";
-
-			us::ImgWrite(warped_captured_path, tmp_captured_img);
+			cv::Mat tmp_captured_img;
+			your_functions::ToProjectorCoordinates(captured_img, tmp_captured_img);
 
 			cv::Mat warped_captured_img = tmp_captured_img(center_roi).clone();
 
 			cv::Mat error_img;
 
-			// 撮影画像（クリップ済み）を保存
-			std::string captured_path =
-				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-				+ "captured_cliped_image_" + zero_padding_num + ".png";
-
-			us::ImgWrite(captured_path, warped_captured_img);
-
-			// NOTE: 位置ズレ抑制のためにガウシアンフィルタをかける
+			// NOTE: 位置ズレ抑制のためにガウシアンフィルタをかけたければどうぞ
 			//cv::GaussianBlur(warped_captured_img, warped_captured_img, cv::Size(5, 5), 0);
 
 			// 画像を更新
-			if (!UpdateImg(warped_captured_img, projection_roi_img, target_img, error_img, RGB_OPTIMIZATION_GAIN)) {
+			if (!::UpdateImg(warped_captured_img, update_img, target_img, error_img, gain)) {
 				std::cerr << "Failed to update the image" << std::endl;
 				return false;
 			}
-
-
-			// 絶対値差分画像を保存
-			std::string error_path =
-				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
-				+ "abs_error_image_" + zero_padding_num + ".png";
-
-			us::ImgWrite(error_path, error_img);
 
 		}
 
