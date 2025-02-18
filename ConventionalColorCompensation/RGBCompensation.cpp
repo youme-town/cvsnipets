@@ -546,7 +546,7 @@ namespace /* To avoid name collision*/ {
 		cv::Mat& update_img,
 		const cv::Mat& target_img,
 		cv::Mat& abs_error_img,
-		const float optimization_gain) {
+		const double optimization_gain) {
 
 		if (captured_img.empty() || target_img.empty() || update_img.empty()) {
 			std::cerr << "Image is empty" << std::endl;
@@ -592,11 +592,17 @@ namespace /* To avoid name collision*/ {
 		const cv::Mat& first_projection_img,
 		const std::string& save_folder,
 		const int num_iterations,
-		const int gain,
+		const double gain,
 		const double gamma[3] = GAMMA) {
 
 		cv::Mat projection_img;	//< 投影画像
-		cv::Mat update_img;		//< 更新画像
+
+		// フォルダパス
+		const std::string captured_image_folder = save_folder + "captured_image/";
+		const std::string clipped_image_folder = save_folder + "clipped_image/";
+		const std::string error_image_folder = save_folder + "error_image/";
+		const std::string projection_image_folder = save_folder + "projection_image/";
+
 
 		// ウィンドウを作成
 		::MakeFullScreenWindow("Projection", PRO_WINDOW_X);
@@ -604,6 +610,10 @@ namespace /* To avoid name collision*/ {
 		// フルスクリーン用のROIを計算
 		cv::Rect center_roi;
 		::CalcCenterROI(target_img.size(), center_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT);
+
+		// 目標画像投影用逆ガンマ補正LUT
+		cv::Mat lut = cv::Mat(1, 256, CV_8UC3);
+		::CalcInverseGammaLUT(lut, gamma);
 
 		// ----------------------
 		// Initialize the camera
@@ -621,22 +631,24 @@ namespace /* To avoid name collision*/ {
 		for (int num_i = -1; num_i < num_iterations; ++num_i) {
 			std::cout << "Iteration: " << num_i << std::endl;
 
-			if (num_i == -1) {
-				// 目標画像を投影
-				projection_img = first_projection_img.clone();
-				update_img = first_projection_img.clone();
-			}
-			else if (num_i == 0) {
-			 // 最初の投影画像を設定
-				projection_img = first_projection_img.clone();
-				update_img = first_projection_img.clone();
-			}
-
 			// ファイル名用のゼロ埋め番号
 			std::string zero_padding_num = ::GetZeroPaddingNumberString(num_i, 4);
 
+			if (num_i == -1) {
+				// 目標画像を投影
+				projection_img = target_img.clone();
+				cv::LUT(projection_img, lut, projection_img);
+			}
+			else if (num_i == 0) {
+				// 初期値画像を投影
+				projection_img = first_projection_img.clone();
+			}
+
 			// 更新画像を投影
 			::ImgShowCenter("Projection", projection_img, cv::Size(PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT));
+			
+			// 投影している画像を保存
+			::ImgWrite(projection_image_folder + zero_padding_num +"_projection_image" + ".png", projection_img);
 
 			// カメラバッファに反映されるまで待つ
 			cv::waitKey(CAMERA_WAIT_MS);
@@ -662,18 +674,23 @@ namespace /* To avoid name collision*/ {
 			cv::Mat tmp_captured_img;
 			your_functions::ToProjectorCoordinates(captured_img, tmp_captured_img);
 
-			cv::Mat warped_captured_img = tmp_captured_img(center_roi).clone();
+			cv::Mat clipped_captured_img = tmp_captured_img(center_roi).clone();
 
 			cv::Mat error_img;
 
 			// NOTE: 位置ズレ抑制のためにガウシアンフィルタをかけたければどうぞ
-			//cv::GaussianBlur(warped_captured_img, warped_captured_img, cv::Size(5, 5), 0);
+			//cv::GaussianBlur(clipped_captured_img, clipped_captured_img, cv::Size(5, 5), 0);
 
 			// 画像を更新
-			if (!::UpdateImg(warped_captured_img, update_img, target_img, error_img, gain)) {
+			if (!::UpdateImg(clipped_captured_img, projection_img, target_img, error_img, gain)) {
 				std::cerr << "Failed to update the image" << std::endl;
 				return false;
 			}
+			
+			// 画像を保存
+			::ImgWrite(captured_image_folder + zero_padding_num + "_captured_image" + ".png", captured_img);
+			::ImgWrite(clipped_image_folder  + zero_padding_num + "_clipped_image"  + ".png", clipped_captured_img);
+			::ImgWrite(error_image_folder    + zero_padding_num + "_error_image"    + ".png", error_img);
 
 		}
 
