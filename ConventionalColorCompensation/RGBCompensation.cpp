@@ -1,14 +1,15 @@
 /**
  * @file YoshidaCompensation.cpp
- * @brief RGB compensation using Yoshida's method
+ * @brief RGB color compensation using Yoshida's method
  * @author Yoshiaki Maeda
  * @date 2025/01/21
  */
 #include <iostream>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
 #include "YoshidaColorMixingMatrix.hpp"
 
-/** 
+/**
  * @namespace your_functions
  * @brief Please implement these functions acconrding to your environment
  */
@@ -16,7 +17,7 @@ namespace your_functions {
 
 	bool InitCamera() {
 		// return true if the camera is successfully initialized
-		return true; 
+		return true;
 	};
 	void TerminateCamera() {};
 
@@ -129,13 +130,66 @@ namespace /* To avoid name collision*/ {
 	}
 
 	/**
+	 * @brief Creates a full-screen window
+	 * @param [in] window_name Name of the window
+	 * @param [in] move_window_width Width to move the window
+	 */
+	void MakeFullScreenWindow(const std::string& window_name, const int move_window_width) {
+		//投影するウィンドウの作成
+		cv::namedWindow(window_name, cv::WINDOW_NORMAL);
+		cv::moveWindow(window_name, move_window_width, 0);
+		cv::setWindowProperty(window_name, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+	}
+
+	/**
+	 * @brief Checks the existence of a folder and creates it if it doesn't exist
+	 * @param [in] folder_path Path to the folder
+	 * @return Returns true if the folder was created or already exists, false otherwise
+	 */
+	bool CheckAndCreateFolder(const std::string& folder_path)
+	{
+		if (!std::filesystem::exists(folder_path)) {
+			std::filesystem::create_directories(std::filesystem::path(folder_path));
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * @brief Splits a full file path into folder path and file name
+	 * @param [in] fullPath Full file path
+	 * @param [out] folderPath Extracted folder path
+	 * @param [out] fileName Extracted file name
+	 */
+	void SplitPath(const std::string& fullPath, std::string& folderPath, std::string& fileName) {
+		std::filesystem::path path(fullPath);
+		folderPath = path.parent_path().string();
+		fileName = path.filename().string();
+	}
+
+	/**
+	 * @brief Wrapper function for cv::imwrite
+	 * @details Automatically creates folders and saves images
+	 * @param [in] save_path Path to save the image
+	 * @param [in] img Image to be saved
+	 * @return Returns true on success, false on failure
+	 */
+	bool ImgWrite(const std::string& full_path, const cv::Mat& img)
+	{
+		std::string folderPath, fileName;
+		SplitPath(full_path, folderPath, fileName);
+		CheckAndCreateFolder(folderPath);
+		return cv::imwrite(full_path, img);
+	}
+
+	/**
 	 * @brief Generate color patterns for RGB compensation
 	 * @param [out] ideal_patterns Ideal color patterns
 	 * @param [out] projection_patterns Projection color patterns
 	 * @param [in] gamma Gamma value for each color (B, G, R)
 	 */
 	void GenerateColorPatterns(std::vector<cv::Mat>& ideal_patterns, std::vector<cv::Mat>& projection_patterns, const double gamma[3]) {
-		std::vector<cv::Mat> projection_images; 
+		std::vector<cv::Mat> projection_images;
 		std::vector<cv::Mat> ideal_images;
 
 		cv::Mat temp_img = cv::Mat::zeros(PRO_WINDOW_HEIGHT, PRO_WINDOW_WIDTH, CV_8UC3);
@@ -164,7 +218,7 @@ namespace /* To avoid name collision*/ {
 					// apply inverse gamma correction
 					cv::Mat temp_img_gamma = cv::Mat::zeros(PRO_WINDOW_HEIGHT, PRO_WINDOW_WIDTH, CV_8UC3);
 					cv::LUT(temp_img, lut, temp_img_gamma);
-					
+
 					// Save the projection pattern for projection
 					projection_images.push_back(temp_img_gamma.clone());
 				}
@@ -189,7 +243,7 @@ namespace /* To avoid name collision*/ {
 		// ----------------------
 		if (your_functions::InitCamera()) {
 			std::cerr << "Failed to initialize the camera" << std::endl;
-            return std::vector<cv::Mat>();
+			return std::vector<cv::Mat>();
 		}
 
 		// -------------
@@ -249,7 +303,7 @@ namespace /* To avoid name collision*/ {
 
 		// Number of unknown value for each pixels）
 		const int num_channel_YoshidaCMM = 12;
-		
+
 		const int num_color_patterns = ideal_patterns.size();
 
 		cv::Mat color_mix_mat = cv::Mat::zeros(camera_height, camera_width, CV_64FC(num_channel_YoshidaCMM));
@@ -332,15 +386,14 @@ namespace /* To avoid name collision*/ {
 
 			});
 
-
 	}
 
 
 	bool CalcYoshidaRGBCompensationImage(
-		const std::vector<cv::Mat> &input_images,
+		const std::vector<cv::Mat>& input_images,
 		std::vector<cv::Mat>& output_images,
-		const cv::Mat &color_mix_mat,
-		const double gamma[3]=GAMMA) {
+		const cv::Mat& color_mix_mat,
+		const double gamma[3] = GAMMA) {
 
 		if (input_images.empty()) {
 			std::cerr << "Input images are empty" << std::endl;
@@ -433,6 +486,227 @@ namespace /* To avoid name collision*/ {
 		std::cout << "Inverse gamma correction done" << std::endl;
 
 		std::cout << "Calc Yoshida RGB done" << std::endl;
+
+		return true;
+
+	}
+
+	/**
+	 * @brief 画像更新処理本体プログラム
+	 *
+	 * @details プロジェクタ座標系の画像を更新する処理を行う
+	 *
+	 * @param [in] captured_img キャプチャ画像
+	 * @param [in,out] update_img 更新画像
+	 * @param [in] target_img ターゲット画像
+	 * @param [out] abs_error_img 絶対値差分画像
+	 * @param [in] optimization_gain 最適化ゲイン
+	 *
+	 * @return 成功した場合はtrue, 失敗した場合はfalse
+	 */
+	bool UpdateImg(
+		const cv::Mat& captured_img,
+		cv::Mat& update_img,
+		const cv::Mat& target_img,
+		cv::Mat& abs_error_img,
+		const float optimization_gain) {
+
+		if (captured_img.empty() || target_img.empty() || update_img.empty()) {
+			std::cerr << "Image is empty" << std::endl;
+			return false;
+		}
+
+		if (captured_img.size() != target_img.size() || captured_img.size() != update_img.size()) {
+			std::cerr << "Image size is different" << std::endl;
+			return false;
+		}
+
+		if (captured_img.type() != target_img.type() || captured_img.type() != update_img.type()) {
+			std::cerr << "Image type is different" << std::endl;
+			return false;
+		}
+
+		update_img.forEach<cv::Vec3b>([&](cv::Vec3b& p, const int* pos) {
+			cv::Vec3b captured_pixel = captured_img.at<cv::Vec3b>(pos[0], pos[1]);
+			cv::Vec3b target_pixel = target_img.at<cv::Vec3b>(pos[0], pos[1]);
+
+			// NOTE:差分画像なので必ず符号ありにする
+			cv::Vec3s diff_pixel = cv::Vec3s(target_pixel) - cv::Vec3s(captured_pixel);
+
+			// 更新前の画像
+			cv::Vec3b before_update_pixel = update_img.at<cv::Vec3b>(pos[0], pos[1]);
+
+			// 更新画像
+			p[0] = cv::saturate_cast<uchar>(before_update_pixel[0] + diff_pixel[0] * optimization_gain);
+			p[1] = cv::saturate_cast<uchar>(before_update_pixel[1] + diff_pixel[1] * optimization_gain);
+			p[2] = cv::saturate_cast<uchar>(before_update_pixel[2] + diff_pixel[2] * optimization_gain);
+
+			});
+
+		cv::absdiff(target_img, update_img, abs_error_img);
+
+		return true;
+	}
+
+
+	// 最適化色補償
+	bool RGBOptimization(
+		const cv::Mat& target_img,
+		const cv::Mat& first_projection_img,
+		const std::string& save_folder,
+		const int num_iterations) {
+
+		// ウィンドウを作成
+		::MakeFullScreenWindow("Projection", PRO_WINDOW_X);
+
+		// フルスクリーン用のROIを計算
+		cv::Rect center_roi;
+		::CalcCenterROI(target_img.size(), center_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT);
+
+		// ----------------------
+		// Initialize the camera
+		// ----------------------
+
+		if (!your_functions::InitCamera()) {
+			std::cerr << "Failed to initialize the camera" << std::endl;
+			return false;
+		}
+
+		// ----------------------
+		// Capture target image
+		// ----------------------
+
+		// 投影画像を表示
+		cv::Mat fullscreen_target_img;
+		::MakeWindowSizeMat(target_img, fullscreen_target_img, center_roi, PRO_WINDOW_WIDTH, PRO_WINDOW_HEIGHT);
+		cv::Mat lut;
+		::CalcInverseGammaLUT(lut, GAMMA);
+
+		cv::LUT(fullscreen_target_img, lut, fullscreen_target_img);
+
+		cv::imshow("Projection", fullscreen_target_img);
+		cv::waitKey(CAMERA_WAIT_MS);
+
+		// --------
+		// Capture
+		// --------
+
+		std::cout << "Capture the target image" << std::endl;
+
+		//NOTE: Please implement your capature function
+		cv::Mat captured_target_img;
+
+		// Warp the captured image
+		cv::Mat tmp_t_captured_img;
+		your_functions::ToProjectorCoordinates(captured_target_img, tmp_t_captured_img);
+
+		// 撮影画像（クリップ済み）を保存
+		std::string t_clipped_captured_path =
+			std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+			+ "captured_cliped_target_image" + ".png";
+
+		::ImgWrite(t_clipped_captured_path, tmp_t_captured_img(center_roi).clone());
+
+		std::cout << "Capture Done" << std::endl;
+
+		// -----------------------
+		// Start the optimization
+		// -----------------------
+
+		for (int num_i = 0; num_i < num_iterations; ++num_i) {
+
+			// ファイル名用のゼロ埋め番号
+			std::string zero_padding_num = us::GetZeroPaddingNumberString(num_i, 4);
+			// 更新画像を投影
+			cv::imshow("Projection", projection_img);
+
+			// 投影画像を保存
+			std::string projection_path =
+				std::string(OUTPUT_PATH) + std::string(PROJECTION_IMAGE_PATH)
+				+ "projection_image_" + zero_padding_num + ".png";
+
+			::ImgWrite(projection_path, projection_img);
+
+			// カメラバッファに反映されるまで待つ
+			cv::waitKey(CAMERA_WAIT_MS);
+
+			// --------
+			// Capture
+			// --------
+			std::cout << "Iteration: " << num_i << std::endl;
+
+			//NOTE: Please implement your capature function
+			cv::Mat captured_img;
+
+			std::string raw_path =
+				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+				+ std::string(RAW_IMAGE_PATH) + "raw_captured_image_" + zero_padding_num + ".CR2";
+
+			std::string png_path =
+				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+				+ "captured_image_" + zero_padding_num + ".png";
+
+			if (!rf::CaptureWithYourCam(cam, raw_path, png_path, captured_img)) {
+				std::cerr << "Failed to capture the image" << std::endl;
+				return false;
+			}
+
+			// -------
+			// Update
+			// -------
+
+			// Warp the captured image
+
+			cv::Mat tmp_captured_img =
+				rf::YourWarpImageFunctionToProjectorCoordinates(captured_img, p2c_map, c2p_map);
+			// 撮影画像（warped）を保存
+			std::string warped_captured_path =
+				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+				+ "captured_warped_image_" + zero_padding_num + ".png";
+
+			us::ImgWrite(warped_captured_path, tmp_captured_img);
+
+			cv::Mat warped_captured_img = tmp_captured_img(center_roi).clone();
+
+			cv::Mat error_img;
+
+			// 撮影画像（クリップ済み）を保存
+			std::string captured_path =
+				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+				+ "captured_cliped_image_" + zero_padding_num + ".png";
+
+			us::ImgWrite(captured_path, warped_captured_img);
+
+			// NOTE: 位置ズレ抑制のためにガウシアンフィルタをかける
+			//cv::GaussianBlur(warped_captured_img, warped_captured_img, cv::Size(5, 5), 0);
+
+			// 画像を更新
+			if (!UpdateImg(warped_captured_img, projection_roi_img, target_img, error_img, RGB_OPTIMIZATION_GAIN)) {
+				std::cerr << "Failed to update the image" << std::endl;
+				return false;
+			}
+
+
+			// 絶対値差分画像を保存
+			std::string error_path =
+				std::string(OUTPUT_PATH) + std::string(CAPTURED_IMAGE_PATH)
+				+ "abs_error_image_" + zero_padding_num + ".png";
+
+			us::ImgWrite(error_path, error_img);
+
+		}
+
+		// ---------------------
+		// Terminate the camera
+		// ---------------------
+
+		your_functions::TerminateCamera();
+
+		// ---------------------
+		// End the optimization
+		// ---------------------
+
+		std::cout << "Optimization complete" << std::endl;
 
 		return true;
 
