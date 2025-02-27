@@ -290,7 +290,7 @@ namespace /* To avoid name collision*/ {
 
 		int capture_count = 0;
 		for (const auto& proj_img : projection_iamges) {
-			std::cout << "Capture count: " << capture_count++ << std::endl;
+			std::cout << "Capture count: " << capture_count << std::endl;
 
 			cv::imshow("projection_win", proj_img);
 			cv::waitKey(CAMERA_WAIT_MS);
@@ -301,6 +301,7 @@ namespace /* To avoid name collision*/ {
 			}
 
 			captured_patterns.push_back(captured_image.clone());
+			++capture_count;
 		}
 
 		// ---------------------
