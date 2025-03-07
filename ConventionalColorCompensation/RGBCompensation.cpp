@@ -19,6 +19,7 @@ namespace your_functions {
 		// return true if the camera is successfully initialized
 		return true;
 	};
+
 	void TerminateCamera() {};
 
 	bool Capture(cv::Mat& dst) {
@@ -48,8 +49,6 @@ namespace /* To avoid name collision*/ {
 	constexpr int PRO_WINDOW_X = 0;  //!< The x-coordinate of the projector window
 	constexpr int PRO_WINDOW_WIDTH = 1920;  //!< The width of the projector window
 	constexpr int PRO_WINDOW_HEIGHT = 1080;  //!< The height of the projector window
-	constexpr int ROI_IMAGE_WIDTH = 512;  //!< The width of the ROI
-	constexpr int ROI_IMAGE_HEIGHT = 512;  //!< The height of the ROI
 	constexpr double GAMMA[3] = { 2.2, 2.2, 2.2 };  //!< The gamma value for each color (B, G, R)
 	/* @} */
 
