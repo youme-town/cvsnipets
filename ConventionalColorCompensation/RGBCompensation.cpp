@@ -429,7 +429,7 @@ namespace /* To avoid name collision*/ {
 	}
 
 
-	bool YoshidaRGBCompensationImage(
+	bool YoshidaRGBCompensation(
 		const std::vector<cv::Mat>& input_images,
 		std::vector<cv::Mat>& output_images,
 		const cv::Mat& color_mix_mat,
@@ -629,6 +629,7 @@ namespace /* To avoid name collision*/ {
 		// Start the optimization
 		// -----------------------
 
+		// -1‰ñ–Ú‚Í–Ú•W‰æ‘œ‚ð“Š‰e
 		for (int num_i = -1; num_i < num_iterations; ++num_i) {
 			std::cout << "Iteration: " << num_i << std::endl;
 
