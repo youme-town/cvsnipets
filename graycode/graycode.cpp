@@ -159,7 +159,9 @@ int graycode() {
 	int cnt = 0;
 
 	// ƒtƒHƒ‹ƒ_‚ª‘¶İ‚µ‚È‚¢ê‡‚Íì¬
-
+	if (!std::filesystem::exists(std::string(OUTPUT_PATH) + std::string(GRAYCODE_IMAGE_PATH))) {
+		std::filesystem::create_directories(std::string(OUTPUT_PATH) + std::string(GRAYCODE_IMAGE_PATH));
+	}
 
 	for (auto gimg : graycodes) {
 		cv::imshow("Pattern", gimg);
